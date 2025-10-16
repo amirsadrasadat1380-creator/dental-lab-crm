@@ -5,10 +5,7 @@ from typing import List, Tuple, Any
 import os
 
 # --- CONFIGURATION ---
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://neondb_owner:npg_8OQ4bidvJtVx@ep-rapid-dust-adifrhxq-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require"
-)
+DATABASE_URL = "postgresql://neondb_owner:npg_8OQ4bidvJtVx@ep-rapid-dust-adifrhxq-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require"
 
 def get_conn():
     """Establish a connection to the PostgreSQL database."""

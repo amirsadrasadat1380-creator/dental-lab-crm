@@ -1,6 +1,7 @@
-# app-V1.py — PostgreSQL Compatible
+# app-V1.py
 import streamlit as st
 import pandas as pd
+import sqlite3
 from datetime import date
 from db import (
     add_customer, get_customers, edit_customer, delete_customer,
@@ -10,9 +11,7 @@ from db import (
     get_price_list, add_price_item, edit_price_item, delete_price_item,
     get_price_by_category, calculate_total_price, get_dent_categories
 )
-
 st.set_page_config(page_title="CRM Lab", layout="wide", initial_sidebar_state="expanded")
-
 # Simple styling
 PRIMARY = "#152A46"
 ACCENT = "#D4AF37"
@@ -25,7 +24,6 @@ st.markdown(
     </style>
     """, unsafe_allow_html=True
 )
-
 # -------------------------
 # Sidebar navigation
 # -------------------------
@@ -34,17 +32,18 @@ page = st.sidebar.radio(
     "Go to",
     ["Dashboard", "Customers", "Orders", "Suppliers", "Reminders", "Price List", "Reports"]
 )
-
-# Helper for rerun (modern Streamlit)
+# helper for rerun
 def do_rerun():
-    st.rerun()
-
+    try:
+        st.experimental_rerun()
+    except Exception:
+        st.stop()
 # -------------------------
 # Dashboard
 # -------------------------
 if page == "Dashboard":
     st.title("🏠 Dashboard — Unique Complex")
-    customers = pd.DataFrame(get_customers(), columns=["ID", "Name", "Phone", "Category", "Notes", "Price_Tier"])
+    customers = pd.DataFrame(get_customers(), columns=["ID", "Name", "Phone", "Category", "Notes"])
     orders = pd.DataFrame(get_orders(), columns=[
         "ID", "Customer_ID", "Day_Arrival_Number", "Month_Arrival_Number", "Year_Arrival_Number",
         "Day_Departure_Number", "Month_Departure_Number", "Year_Departure_Number", "Doctor_Name",
@@ -55,11 +54,11 @@ if page == "Dashboard":
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total Customers", len(customers))
     c2.metric("Total Orders", len(orders))
+    # Incomplete = no departure date set (NULL)
     incomplete_orders = len(orders[orders["Day_Departure_Number"].isna()]) if not orders.empty else 0
     c3.metric("Incomplete Orders", incomplete_orders)
     c4.metric("Pending Reminders", len(reminders))
     c5.metric("Suppliers", len(suppliers))
-
 # -------------------------
 # Customers Page
 # -------------------------
@@ -68,32 +67,32 @@ elif page == "Customers":
     col1, col2 = st.columns([6, 1])
     with col2:
         if st.button("🔄 Refresh", key="refresh_customers"):
-            do_rerun()
+            st._rerun()
     c_main, c_filters = st.columns([3, 1])
+    # Add form
     with c_main.expander("➕ Add Customer", expanded=True):
         with st.form("add_customer_form"):
             name = st.text_input("Name", key="add_c_name")
             phone = st.text_input("Phone", key="add_c_phone")
             category = st.selectbox("Category", ["Clinic", "Doctor", "Lab"], key="add_c_cat")
             notes = st.text_area("Notes", key="add_c_notes")
-            price_tier = st.selectbox("Price Tier", ["Standard", "Legacy"], key="add_c_tier")
             submitted = st.form_submit_button("Add Customer")
             if submitted:
                 if not name.strip():
                     st.warning("Name required")
                 else:
-                    new_id = add_customer(name.strip(), phone.strip(), category, notes.strip(), price_tier)
+                    new_id = add_customer(name.strip(), phone.strip(), category, notes.strip())
                     st.success(f"Customer added (ID {new_id})")
                     do_rerun()
-
+    # Filters
     with c_filters.expander("🔍 Filters", expanded=True):
         name_filter = st.text_input("Name contains", key="cust_filter_name")
         id_filter = st.text_input("ID exact", key="cust_filter_id")
         category_filter = st.selectbox("Category", ["All", "Clinic", "Doctor", "Lab"], key="cust_filter_cat")
         apply_filter = st.button("Apply Filter", key="cust_filter_btn")
-
+    # Get & filter
     customers_list = get_customers()
-    df = pd.DataFrame(customers_list, columns=["ID","Name","Phone","Category","Notes","Price_Tier"])
+    df = pd.DataFrame(customers_list, columns=["ID","Name","Phone","Category","Notes"])
     if apply_filter:
         if name_filter.strip():
             df = df[df["Name"].str.contains(name_filter.strip(), case=False, na=False)]
@@ -101,11 +100,11 @@ elif page == "Customers":
             df = df[df["ID"] == int(id_filter.strip())]
         if category_filter != "All":
             df = df[df["Category"] == category_filter]
-
     st.subheader("All Customers")
     if not df.empty:
         st.dataframe(df, use_container_width=True)
         ids = df["ID"].tolist()
+        # Edit block
         st.markdown("### ✏️ Edit customer")
         edit_id = st.selectbox("Select ID to edit", [""] + ids, key="cust_edit_select")
         if edit_id != "":
@@ -117,37 +116,31 @@ elif page == "Customers":
                                        index=["Clinic","Doctor","Lab"].index(sel["Category"]),
                                        key=f"cust_e_cat_{edit_id}")
                 new_notes = st.text_area("Notes", value=sel["Notes"] or "", key=f"cust_e_notes_{edit_id}")
-                new_tier = st.selectbox("Price Tier", ["Standard", "Legacy"],
-                                        index=["Standard", "Legacy"].index(sel["Price_Tier"]),
-                                        key=f"cust_e_tier_{edit_id}")
                 edit_sub = st.form_submit_button("Update Customer")
                 if edit_sub:
-                    edit_customer(int(edit_id), new_name.strip(), new_phone.strip(), new_cat, new_notes.strip(), new_tier)
+                    edit_customer(int(edit_id), new_name.strip(), new_phone.strip(), new_cat, new_notes.strip())
                     st.success(f"Customer {edit_id} updated")
                     do_rerun()
-
+        # Delete block
         st.markdown("### 🗑 Delete customer")
         del_id = st.selectbox("Select ID to delete", [""] + ids, key="cust_del_select")
         if del_id != "" and st.button("Delete Selected Customer", key="cust_del_btn"):
             delete_customer(int(del_id))
             st.success(f"Customer {del_id} deleted")
             do_rerun()
-
+        # Export
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Export CSV", csv, file_name="customers.csv", mime="text/csv")
     else:
         st.info("No customers to display.")
-
-# -------------------------
-# Orders Page
 # -------------------------
 elif page == "Orders":
     st.title("📝 Orders")
     col1, col2 = st.columns([6, 1])
     with col2:
         if st.button("🔄 Refresh", key="refresh_orders"):
-            do_rerun()
-
+            st._rerun()
+    # === MAIN LAYOUT ===
     main_col, filter_col = st.columns([3, 1])
     customers = get_customers()
     suppliers = get_suppliers()
@@ -166,7 +159,7 @@ elif page == "Orders":
             "Metal-Ceramic Crown & Bridge (14 Units)", "European Company Abutment",
             "European Company Abutment (Full Arch)"
         ]
-
+    # === FILTERS (NO NESTED COLUMNS) ===
     with filter_col:
         with st.expander("🔍 Filters", expanded=True):
             st.markdown("### 📅 Date Filter")
@@ -188,10 +181,11 @@ elif page == "Orders":
             status_filter = st.text_input("Status", key="order_filter_status")
             st.markdown("")
             apply_filter = st.button("Apply Filters", use_container_width=True, key="apply_filters_btn")
-
+    # === ADD ORDER FORM (NO COLUMNS INSIDE FORM) ===
     with main_col:
         with st.expander("➕ Add New Order", expanded=True):
             with st.form("add_order_form"):
+                # Customer
                 cust_display = [f"{c[0]} - {c[1]}" for c in customers] if customers else []
                 if cust_display:
                     sel_customer = st.selectbox("Customer", cust_display, key="add_o_customer")
@@ -199,12 +193,12 @@ elif page == "Orders":
                 else:
                     st.warning("No customers available.")
                     sel_c_id = None
-
+                # Arrival Dates (FLAT - NO COLUMNS)
                 st.markdown("### 📅 Arrival (Lunar Calendar)")
                 day_arrival = st.number_input("Day", 1, 30, 1, key="add_o_day_arr")
                 month_arrival = st.number_input("Month", 1, 12, 1, key="add_o_month_arr")
                 year_arrival = st.number_input("Year", 1300, 1500, 1404, key="add_o_year_arr")
-
+                # Departure Dates
                 st.markdown("### 📅 Departure (Lunar Calendar)")
                 not_departed = st.checkbox("Not departed yet", key="add_not_departed")
                 if not not_departed:
@@ -213,21 +207,27 @@ elif page == "Orders":
                     year_departure = st.number_input("Year", 1300, 1500, 1404, key="add_o_year_dep")
                 else:
                     day_departure = month_departure = year_departure = None
-
+                # Order Details
                 st.markdown("### 📋 Order Details")
                 doctor = st.text_input("Doctor Name", key="add_o_doc")
                 patient = st.text_input("Patient Name", key="add_o_pat")
-
+                # Dent Categories (FLAT LIST - NO COLUMNS)
                 st.markdown("### 🦷 Dent Categories")
                 dent_cat_with_qty = []
                 total_units = 0
                 for i, cat in enumerate(dent_categories):
-                    qty = st.number_input(cat, min_value=0, max_value=100, value=0, key=f"add_o_qty_{i}")
+                    qty = st.number_input(
+                        cat,
+                        min_value=0,
+                        max_value=100,
+                        value=0,
+                        key=f"add_o_qty_{i}"
+                    )
                     if qty > 0:
                         dent_cat_with_qty.append(f"{cat}:{qty}")
                         total_units += qty
                 dent_cat = ", ".join(dent_cat_with_qty) if dent_cat_with_qty else ""
-
+                # Rest of form
                 sup_choices_list = [f"{s[0]} - {s[1]}" for s in suppliers] if suppliers else []
                 sup_select = st.multiselect("Co-Workers", sup_choices_list, key="add_o_sup")
                 co_worker_ids_str = ",".join([s.split(" - ")[0] for s in sup_select]) if sup_select else ""
@@ -237,10 +237,9 @@ elif page == "Orders":
                     'BL1','BL2','BL3','BL4'
                 ], key="add_o_color")
                 status = st.text_input("Status", key="add_o_stat")
-
-                total_price = calculate_total_price(dent_cat, sel_c_id)  # ← PASS customer_id for tiered pricing
+                total_price = calculate_total_price(dent_cat)
                 st.info(f"💰 Total: {total_price:,.0f} IRR | 📦 Units: {total_units}")
-
+                # ✅ SUBMIT BUTTON - DIRECT CHILD OF FORM
                 submitted = st.form_submit_button("Add Order", use_container_width=True)
                 if submitted:
                     if sel_c_id is None:
@@ -255,7 +254,7 @@ elif page == "Orders":
                         )
                         st.success(f"✅ Order {new_id} added")
                         do_rerun()
-
+        # === ORDERS TABLE ===
         st.subheader("📋 All Orders")
         orders_list = get_orders()
         df = pd.DataFrame(orders_list, columns=[
@@ -263,7 +262,7 @@ elif page == "Orders":
             "Day_Departure_Number", "Month_Departure_Number", "Year_Departure_Number", "Doctor_Name",
             "Patient_Name", "Dent_Category", "Co_Worker_Owns", "No_Units", "Color", "Price", "Status"
         ])
-
+        # Apply filters
         if apply_filter or filter_type != "All":
             if filter_type != "All":
                 def is_date_in_range(row):
@@ -287,7 +286,7 @@ elif page == "Orders":
                 df = df[df["Doctor_Name"].str.contains(doctor_filter.strip(), case=False, na=False)]
             if status_filter.strip():
                 df = df[df["Status"].str.contains(status_filter.strip(), case=False, na=False)]
-
+        # Map customer names
         id_to_name = {str(c[0]): c[1] for c in customers}
         sup_id_name_map = {str(s[0]): s[1] for s in suppliers}
         def co_names_field(s):
@@ -295,10 +294,10 @@ elif page == "Orders":
                 return ""
             ids = [i.strip() for i in str(s).split(",") if i.strip()]
             return ", ".join([sup_id_name_map.get(i, f"ID {i}") for i in ids])
-
         if not df.empty:
             df["Customer"] = df["Customer_ID"].astype(str).map(id_to_name).fillna("⚠️ Deleted")
             df["Co_Worker_Names"] = df["Co_Worker_Owns"].apply(co_names_field)
+            # Display table with departure status
             df["Departure_Status"] = df.apply(
                 lambda row: "✅ Departed" if pd.notna(row["Day_Departure_Number"]) else "⏳ Not Departed",
                 axis=1
@@ -313,13 +312,14 @@ elif page == "Orders":
             st.dataframe(df[display_cols], use_container_width=True)
             csv = df[display_cols].to_csv(index=False).encode("utf-8")
             st.download_button("📥 Download Orders", csv, "orders.csv", "text/csv", use_container_width=True)
-
+            # === EDIT/DELETE SECTION ===
             st.markdown("### ✏️ Edit / 🗑️ Delete Order")
             edit_del_col1, edit_del_col2 = st.columns(2)
             with edit_del_col1:
                 edit_id = st.selectbox("Edit Order ID", [""] + df["ID"].tolist(), key="order_edit_select")
                 if edit_id != "":
                     sel = df[df["ID"] == edit_id].iloc[0]
+                    # ✅ EDIT FORM (NO COLUMNS INSIDE FORM)
                     with st.form(f"order_edit_form_{edit_id}"):
                         cust_display = [f"{c[0]} - {c[1]}" for c in customers] if customers else []
                         if cust_display:
@@ -332,15 +332,19 @@ elif page == "Orders":
                             new_cust_id = int(new_cust.split(" - ")[0])
                         else:
                             new_cust_id = sel["Customer_ID"]
-
+                        # Arrival Dates (FLAT)
                         st.markdown("### 📅 Arrival (Lunar Calendar)")
                         new_day_arrival = st.number_input("Day", 1, 30, int(sel["Day_Arrival_Number"]), key=f"order_e_day_arr_{edit_id}")
                         new_month_arrival = st.number_input("Month", 1, 12, int(sel["Month_Arrival_Number"]), key=f"order_e_month_arr_{edit_id}")
                         new_year_arrival = st.number_input("Year", 1300, 1500, int(sel["Year_Arrival_Number"]), key=f"order_e_year_arr_{edit_id}")
-
+                        # Departure Dates
                         st.markdown("### 📅 Departure (Lunar Calendar)")
                         current_departed = not (pd.isna(sel["Day_Departure_Number"]) or sel["Day_Departure_Number"] is None)
-                        not_departed = st.checkbox("Not departed yet", value=not current_departed, key=f"edit_not_departed_{edit_id}")
+                        not_departed = st.checkbox(
+                            "Not departed yet",
+                            value=not current_departed,
+                            key=f"edit_not_departed_{edit_id}"
+                        )
                         if not not_departed:
                             new_day_departure = st.number_input("Day", 1, 30, 
                                 int(sel["Day_Departure_Number"]) if current_departed else 1, key=f"order_e_day_dep_{edit_id}")
@@ -350,10 +354,10 @@ elif page == "Orders":
                                 int(sel["Year_Departure_Number"]) if current_departed else 1404, key=f"order_e_year_dep_{edit_id}")
                         else:
                             new_day_departure = new_month_departure = new_year_departure = None
-
+                        # Order Details
                         new_doc = st.text_input("Doctor Name", value=sel["Doctor_Name"] or "", key=f"order_e_doc_{edit_id}")
                         new_pat = st.text_input("Patient Name", value=sel["Patient_Name"] or "", key=f"order_e_pat_{edit_id}")
-
+                        # Dent Categories (FLAT LIST)
                         existing_dict = {}
                         if sel["Dent_Category"]:
                             for item in sel["Dent_Category"].split(","):
@@ -363,18 +367,23 @@ elif page == "Orders":
                                     existing_dict[cat.strip()] = int(qty.strip())
                                 else:
                                     existing_dict[item] = 1
-
                         st.markdown("### 🦷 Dent Categories")
                         dent_cat_with_qty = []
                         total_units = 0
                         for i, cat in enumerate(dent_categories):
                             current_qty = existing_dict.get(cat, 0)
-                            qty = st.number_input(cat, min_value=0, max_value=100, value=current_qty, key=f"edit_o_qty_{edit_id}_{i}")
+                            qty = st.number_input(
+                                cat,
+                                min_value=0,
+                                max_value=100,
+                                value=current_qty,
+                                key=f"edit_o_qty_{edit_id}_{i}"
+                            )
                             if qty > 0:
                                 dent_cat_with_qty.append(f"{cat}:{qty}")
                                 total_units += qty
                         new_dent_cat_str = ", ".join(dent_cat_with_qty) if dent_cat_with_qty else ""
-
+                        # Rest of form
                         sup_choices_list = [f"{s[0]} - {s[1]}" for s in suppliers] if suppliers else []
                         current_ids = sel["Co_Worker_Owns"] or ""
                         current_sel = []
@@ -385,18 +394,16 @@ elif page == "Orders":
                                     current_sel.append(f"{sid} - {sup_id_name_map[sid]}")
                         new_sup = st.multiselect("Co-Workers", sup_choices_list, default=current_sel, key=f"order_e_sup_{edit_id}")
                         new_co_worker_ids = ",".join([s.split(" - ")[0] for s in new_sup]) if new_sup else ""
-
                         color_options = ['A1','A2','A3','A3.5','A4','B1','B2','B3','B4','C1','C2','C3','C4','D2','D3','D4','OM1','OM2','OM3','BW','BL1','BL2','BL3','BL4']
                         try:
                             default_color_index = color_options.index(sel["Color"])
                         except (ValueError, TypeError):
                             default_color_index = 0
                         new_color = st.selectbox("Color", color_options, index=default_color_index, key=f"order_e_color_{edit_id}")
-
-                        new_total_price = calculate_total_price(new_dent_cat_str, new_cust_id)  # ← PASS customer_id
+                        new_total_price = calculate_total_price(new_dent_cat_str)
                         st.info(f"💰 Total: {new_total_price:,.0f} IRR | 📦 Units: {total_units}")
                         new_status = st.text_input("Status", value=sel["Status"] or "", key=f"order_e_stat_{edit_id}")
-
+                        # ✅ SUBMIT BUTTON
                         if st.form_submit_button("Update Order", use_container_width=True):
                             edit_order(
                                 int(edit_id),
@@ -414,7 +421,6 @@ elif page == "Orders":
                             )
                             st.success(f"✅ Order {edit_id} updated")
                             do_rerun()
-
             with edit_del_col2:
                 del_id = st.selectbox("Delete Order ID", [""] + df["ID"].tolist(), key="order_del_select")
                 if del_id != "":
@@ -424,7 +430,6 @@ elif page == "Orders":
                         do_rerun()
         else:
             st.info("📭 No orders match your filters. Try adjusting them or add a new order.")
-
 # -------------------------
 # Suppliers Page
 # -------------------------
@@ -433,8 +438,9 @@ elif page == "Suppliers":
     col1, col2 = st.columns([6, 1])
     with col2:
         if st.button("🔄 Refresh", key="refresh_suppliers"):
-            do_rerun()
+            st._rerun()
     c_main, c_filters = st.columns([3,1])
+    # Add supplier
     with c_main.expander("➕ Add Supplier", expanded=True):
         with st.form("add_supplier_form"):
             name = st.text_input("Name", key="add_s_name")
@@ -447,12 +453,11 @@ elif page == "Suppliers":
                     new_id = add_supplier(name.strip(), s_type)
                     st.success(f"Supplier added (ID {new_id})")
                     do_rerun()
-
+    # Filters
     with c_filters.expander("🔍 Filters", expanded=True):
         name_filter = st.text_input("Name contains", key="sup_filter_name")
         type_filter = st.selectbox("Type", ["All","Porcelain","Laminate","PFM","Post NPG","Milling","Customize Abutment"], key="sup_filter_type")
         apply_filter = st.button("Apply Filters", key="sup_filter_btn")
-
     suppliers_list = get_suppliers()
     df = pd.DataFrame(suppliers_list, columns=["ID","Name","Type"])
     if apply_filter:
@@ -460,7 +465,6 @@ elif page == "Suppliers":
             df = df[df["Name"].str.contains(name_filter.strip(), case=False, na=False)]
         if type_filter != "All":
             df = df[df["Type"] == type_filter]
-
     st.subheader("All Suppliers")
     if not df.empty:
         st.dataframe(df, use_container_width=True)
@@ -478,19 +482,16 @@ elif page == "Suppliers":
                     edit_supplier(int(edit_id), new_name.strip(), new_type)
                     st.success(f"Supplier {edit_id} updated")
                     do_rerun()
-
         st.markdown("### 🗑 Delete Supplier")
         del_id = st.selectbox("Select Supplier ID to delete", [""] + ids, key="sup_del_select")
         if del_id != "" and st.button("Delete Selected Supplier", key="sup_del_btn"):
             delete_supplier(int(del_id))
             st.success(f"Supplier {del_id} deleted")
             do_rerun()
-
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Export CSV", csv, file_name="suppliers.csv", mime="text/csv")
     else:
         st.info("No suppliers to display.")
-
 # -------------------------
 # Reminders Page
 # -------------------------
@@ -499,7 +500,7 @@ elif page == "Reminders":
     col1, col2 = st.columns([6, 1])
     with col2:
         if st.button("🔄 Refresh", key="refresh_reminders"):
-            do_rerun()
+            st._rerun()
     c_main, c_filters = st.columns([3,1])
     customers = get_customers()
     cust_display = [f"{c[0]} - {c[1]}" for c in customers] if customers else []
@@ -521,12 +522,11 @@ elif page == "Reminders":
                     new_id = add_reminder(sel_c_id, r_date.strftime("%Y-%m-%d"), note.strip())
                     st.success(f"Reminder added (ID {new_id})")
                     do_rerun()
-
+    # Filters
     with c_filters.expander("🔍 Filters", expanded=True):
         cust_filter = st.text_input("Customer Name contains", key="rem_filter_cust")
         date_filter = st.date_input("Reminder Date", value=None, key="rem_filter_date")
         apply_filter = st.button("Apply Filters", key="rem_filter_btn")
-
     reminders_list = get_reminders()
     df = pd.DataFrame(reminders_list, columns=["ID","Customer_ID","Reminder_Date","Note"])
     id_to_name = {str(c[0]): c[1] for c in customers}
@@ -534,13 +534,11 @@ elif page == "Reminders":
         df["Customer"] = df["Customer_ID"].astype(str).map(id_to_name).fillna("⚠️ Deleted")
     else:
         df["Customer"] = pd.Series([], dtype="object")
-
     if apply_filter:
         if cust_filter.strip():
             df = df[df["Customer"].str.contains(cust_filter.strip(), case=False, na=False)]
         if date_filter:
             df = df[df["Reminder_Date"] == date_filter.strftime("%Y-%m-%d")]
-
     st.subheader("All Reminders")
     if not df.empty:
         st.dataframe(df[["ID","Customer","Reminder_Date","Note"]], use_container_width=True)
@@ -559,6 +557,7 @@ elif page == "Reminders":
                     new_cust_id = int(new_cust.split(" - ")[0])
                 else:
                     new_cust_id = None
+                # Handle possible NaT or None dates
                 try:
                     default_date = pd.to_datetime(sel["Reminder_Date"]).date()
                 except:
@@ -572,31 +571,30 @@ elif page == "Reminders":
                         edit_reminder(int(edit_id), new_cust_id, new_date.strftime("%Y-%m-%d"), new_note.strip())
                         st.success(f"Reminder {edit_id} updated")
                         do_rerun()
-
         st.markdown("### 🗑 Delete Reminder")
         del_id = st.selectbox("Select Reminder ID to delete", [""] + ids, key="rem_del_select")
         if del_id != "" and st.button("Delete Selected Reminder", key="rem_del_btn"):
             delete_reminder(int(del_id))
             st.success(f"Reminder {del_id} deleted")
             do_rerun()
-
         csv = df[["ID","Customer","Reminder_Date","Note"]].to_csv(index=False).encode("utf-8")
         st.download_button("📥 Export CSV", csv, file_name="reminders.csv", mime="text/csv")
     else:
         st.info("No reminders to display.")
-
 # -------------------------
-# Price List Page
+# Price List Page (NEW)
 # -------------------------
 elif page == "Price List":
     st.title("💰 Price List")
     col1, col2 = st.columns([6, 1])
     with col2:
         if st.button("🔄 Refresh", key="refresh_price_list"):
-            do_rerun()
+            st.rerun()
     c_main, c_filters = st.columns([3, 1])
+    # Get current price list
     price_items = get_price_list()
     df = pd.DataFrame(price_items, columns=["ID", "Dent_Category", "Price_Per_Unit"])
+    # Add new price item - FREE TEXT INPUT
     with c_main.expander("➕ Add Price Item", expanded=False):
         with st.form("add_price_form"):
             st.markdown("#### Enter Dent Category and Price")
@@ -611,22 +609,27 @@ elif page == "Price List":
                         new_id = add_price_item(category.strip(), price)
                         st.success(f"✅ Price added for '{category}' (ID {new_id})")
                         do_rerun()
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-
+                    except sqlite3.IntegrityError:
+                        st.error(f"❌ '{category}' already exists in the price list!")
+    # Display price list
     st.subheader("Current Prices")
     if not df.empty:
+        # Show actual database IDs
         display_df = df[["ID", "Dent_Category", "Price_Per_Unit"]].rename(columns={
             "ID": "Database ID",
             "Dent_Category": "Dent Category",
             "Price_Per_Unit": "Price (IRR)"
         })
         st.dataframe(display_df, use_container_width=True)
-
+        # Edit section - USE DATABASE ID
         st.markdown("### ✏️ Edit Price Item")
-        edit_id = st.selectbox("Select item to edit", options=[""] + df["ID"].tolist(), key="price_edit_id")
+        edit_id = st.selectbox(
+            "Select item to edit", 
+            options=[""] + df["ID"].tolist(),
+            key="price_edit_id"
+        )
         if edit_id != "":
-            sel = df[df["ID"] == edit_id].iloc[0]
+            sel = df[df["ID"] == edit_id].iloc[0]  # ← Filter by DATABASE ID
             with st.form(f"edit_price_{edit_id}"):
                 new_cat = st.text_input("Dent Category", value=sel["Dent_Category"], key=f"price_e_cat_{edit_id}")
                 new_price = st.number_input("Price per Unit (IRR)", min_value=0.0, value=float(sel["Price_Per_Unit"]), step=1000.0, key=f"price_e_price_{edit_id}")
@@ -635,36 +638,40 @@ elif page == "Price List":
                         st.error("❌ Dent category cannot be empty")
                     else:
                         try:
-                            edit_price_item(edit_id, new_cat.strip(), new_price)
+                            edit_price_item(edit_id, new_cat.strip(), new_price)  # ← PASS DATABASE ID
                             st.success(f"✅ Price updated for '{new_cat}'")
                             do_rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error: {str(e)}")
-
+                        except sqlite3.IntegrityError:
+                            st.error(f"❌ Another item already uses the category '{new_cat}'!")
+        # Delete section - USE DATABASE ID
         st.markdown("### 🗑️ Delete Price Item")
-        del_id = st.selectbox("Select item to delete", options=[""] + df["ID"].tolist(), key="price_del_id")
+        del_id = st.selectbox(
+            "Select item to delete", 
+            options=[""] + df["ID"].tolist(),
+            key="price_del_id"
+        )
         if del_id != "":
             if st.button("Delete Selected Item", key="price_del_btn", use_container_width=True):
-                delete_price_item(del_id)
+                delete_price_item(del_id)  # ← PASS DATABASE ID
                 st.success("🗑️ Price item deleted")
                 do_rerun()
-
+        # Export
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Export Price List", csv, file_name="price_list.csv", mime="text/csv", use_container_width=True)
     else:
-        st.info("Price list is empty. Add your first item using the form above!")
-
+        st.info("ostringstream empty. Add your first item using the form above!")
 # -------------------------
 # Reports Page 
 # -------------------------
 elif page == "Reports":
     st.title("📈 Advanced Analytics Dashboard")
+    # === TIME FILTER ===
     st.sidebar.markdown("### 📅 Time Filter (Lunar Calendar)")
+    # Fetch data to get year range
     orders_list = get_orders()
     if not orders_list:
-        st.info("No order data yet. Add orders to unlock insights!")
+        st.info("ostringstream No order data yet. Add orders to unlock insights!")
         st.stop()
-
     orders_temp = pd.DataFrame(orders_list, columns=[
         "ID", "Customer_ID", "Day_Arrival_Number", "Month_Arrival_Number", "Year_Arrival_Number",
         "Day_Departure_Number", "Month_Departure_Number", "Year_Departure_Number", "Doctor_Name",
@@ -684,8 +691,9 @@ elif page == "Reports":
         default=all_months,
         format_func=lambda x: f"Month {x}"
     )
-
+    # === DATA PREPARATION ===
     orders_df = orders_temp.copy()
+    # Apply filters
     if selected_years:
         orders_df = orders_df[orders_df["Year_Arrival_Number"].isin(selected_years)]
     if selected_months:
@@ -693,11 +701,10 @@ elif page == "Reports":
     if orders_df.empty:
         st.warning("No orders match the selected filters.")
         st.stop()
-
-    customers_df = pd.DataFrame(get_customers(), columns=["ID", "Name", "Phone", "Category", "Notes", "Price_Tier"])
+    customers_df = pd.DataFrame(get_customers(), columns=["ID", "Name", "Phone", "Category", "Notes"])
     id_to_name = {row["ID"]: row["Name"] for _, row in customers_df.iterrows()}
     orders_df["Customer"] = orders_df["Customer_ID"].map(id_to_name).fillna("⚠️ Deleted")
-
+    # Parse dent categories with quantities
     def parse_dent_categories(dent_str):
         items = []
         if not dent_str:
@@ -713,47 +720,47 @@ elif page == "Reports":
             else:
                 items.append((part, 1))
         return items
-
     orders_df["Parsed_Dent"] = orders_df["Dent_Category"].apply(parse_dent_categories)
-
+    # === CONTEXT BANNER ===
     year_str = f"Years: {', '.join(map(str, sorted(selected_years)))}" if selected_years else "All Years"
     month_str = f"Months: {', '.join(map(str, sorted(selected_months)))}" if len(selected_months) < 12 else "All Months"
     st.info(f"📊 Showing analytics for {year_str}, {month_str}")
-
+    # === OVERALL METRICS (MODERN CARD LAYOUT) ===
     st.markdown("---")
     st.subheader("📊 Executive Summary")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown(f"""
+        st.markdown("""
         <div style="background-color:#1E2A38; padding:20px; border-radius:10px; text-align:center;">
             <h3>💰 Total Revenue</h3>
-            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{orders_df['Price'].sum():,.0f} IRR</p>
+            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{revenue}</p>
         </div>
-        """, unsafe_allow_html=True)
+        """.format(revenue=f"{orders_df['Price'].sum():,.0f} IRR"), unsafe_allow_html=True)
     with col2:
-        st.markdown(f"""
+        st.markdown("""
         <div style="background-color:#1E2A38; padding:20px; border-radius:10px; text-align:center;">
             <h3>🎯 Avg Order Value</h3>
-            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{orders_df['Price'].mean():,.0f} IRR</p>
+            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{avg_price}</p>
         </div>
-        """, unsafe_allow_html=True)
+        """.format(avg_price=f"{orders_df['Price'].mean():,.0f} IRR"), unsafe_allow_html=True)
     with col3:
-        st.markdown(f"""
+        st.markdown("""
         <div style="background-color:#1E2A38; padding:20px; border-radius:10px; text-align:center;">
             <h3>📦 Total Orders</h3>
-            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{len(orders_df)}</p>
+            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{total_orders}</p>
         </div>
-        """, unsafe_allow_html=True)
+        """.format(total_orders=len(orders_df)), unsafe_allow_html=True)
     with col4:
-        st.markdown(f"""
+        st.markdown("""
         <div style="background-color:#1E2A38; padding:20px; border-radius:10px; text-align:center;">
             <h3>🔢 Total Units</h3>
-            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{orders_df["No_Units"].sum()}</p>
+            <p style="font-size:24px; font-weight:bold; color:#D4AF37;">{total_units}</p>
         </div>
-        """, unsafe_allow_html=True)
-
+        """.format(total_units=orders_df["No_Units"].sum()), unsafe_allow_html=True)
+    # === SECTION 1: FINANCIAL PERFORMANCE ===
     st.markdown("---")
     st.subheader("💰 Financial Performance")
+    # Revenue by Year-Month (with clean labels)
     if len(selected_years) > 1 or len(selected_months) > 1:
         orders_df["YearMonth"] = orders_df["Year_Arrival_Number"].astype(str) + "-" + orders_df["Month_Arrival_Number"].astype(str).str.zfill(2)
         orders_df["YearMonth_Label"] = orders_df["Year_Arrival_Number"].astype(str) + " - Month " + orders_df["Month_Arrival_Number"].astype(str)
@@ -781,21 +788,24 @@ elif page == "Reports":
             height=400
         )
         st.plotly_chart(fig, use_container_width=True)
-
+    # Top 5 Highest Value Orders
     top_orders = orders_df.nlargest(5, "Price")[["ID", "Customer", "Dent_Category", "Price"]]
     st.write("#### 🥇 Top 5 Highest-Value Orders")
     st.dataframe(top_orders, use_container_width=True)
     st.markdown("---")
-
+    # === SECTION 2: OPERATIONAL FLOW ===
     st.subheader("📅 Operational Flow")
+    # Completion Rate
     completed = orders_df["Day_Departure_Number"].notna().sum()
     completion_rate = completed / len(orders_df) * 100
     st.metric("Order Completion Rate", f"{completion_rate:.1f}%")
+    # Average Units per Order
     avg_units = orders_df["No_Units"].mean()
     st.metric("Avg Units per Order", f"{avg_units:.1f}")
     st.markdown("---")
-
+    # === SECTION 3: CUSTOMER & PARTNER DYNAMICS ===
     st.subheader("👥 Customer & Partner Insights")
+    # Top 5 Customers by Revenue
     top_customers = orders_df.groupby("Customer")["Price"].sum().nlargest(5)
     if not top_customers.empty:
         customer_df = top_customers.reset_index()
@@ -819,7 +829,7 @@ elif page == "Reports":
             height=400
         )
         st.plotly_chart(fig, use_container_width=True)
-
+    # Supplier Load
     if orders_df["Co_Worker_Owns"].notna().any() and not orders_df["Co_Worker_Owns"].eq("").all():
         supplier_load = {}
         sup_id_name_map = {str(s[0]): s[1] for s in get_suppliers()}
@@ -850,8 +860,9 @@ elif page == "Reports":
             )
             st.plotly_chart(fig, use_container_width=True)
     st.markdown("---")
-
+    # === SECTION 4: PRODUCT MIX & TRENDS ===
     st.subheader("🦷 Product Mix & Trends")
+    # Expand dent categories
     dent_expanded = []
     for _, row in orders_df.iterrows():
         for cat, qty in row["Parsed_Dent"]:
@@ -862,6 +873,7 @@ elif page == "Reports":
             })
     dent_df = pd.DataFrame(dent_expanded)
     if not dent_df.empty:
+        # Top 10 Categories by Units Sold
         top_cats_qty = dent_df.groupby("Category")["Quantity"].sum().nlargest(10).reset_index()
         fig1 = px.bar(
             top_cats_qty,
@@ -881,10 +893,12 @@ elif page == "Reports":
             height=400
         )
         st.plotly_chart(fig1, use_container_width=True)
-
+        # === NEW: Revenue per Unit by Category ===
+        # Calculate revenue per unit for each category
         revenue_per_unit = dent_df.groupby("Category").apply(
             lambda x: x["Revenue"].sum() / x["Quantity"].sum()
         ).reset_index(name="Revenue_Per_Unit")
+        # Sort by revenue per unit (descending)
         revenue_per_unit = revenue_per_unit.sort_values("Revenue_Per_Unit", ascending=False).head(10)
         fig2 = px.bar(
             revenue_per_unit,
@@ -905,9 +919,10 @@ elif page == "Reports":
             height=400
         )
         st.plotly_chart(fig2, use_container_width=True)
-
+        # === BONUS: Profitability Matrix (Optional) ===
         st.markdown("### 💡 Profitability Matrix")
         st.write("Categories with high units AND high revenue per unit are your **star performers**.")
+        # Create a scatter plot: Units vs Revenue per Unit
         scatter_data = dent_df.groupby("Category").agg({
             "Quantity": "sum",
             "Revenue": "sum"
@@ -935,7 +950,7 @@ elif page == "Reports":
             height=400
         )
         st.plotly_chart(fig3, use_container_width=True)
-
+    # Color Preferences
     if "Color" in orders_df.columns and orders_df["Color"].notna().any():
         color_counts = orders_df["Color"].value_counts().head(10).reset_index()
         color_counts.columns = ["Color", "Count"]
@@ -954,7 +969,7 @@ elif page == "Reports":
             height=400
         )
         st.plotly_chart(fig, use_container_width=True)
-
+    # === ACTIONABLE INSIGHTS ===
     st.markdown("---")
     st.subheader("💡 Key Business Insights")
     insights = []
